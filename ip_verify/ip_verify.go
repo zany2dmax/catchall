@@ -48,6 +48,8 @@ func reverseLookup(ip string) (string, error) {
 func main() {
 	inputFile := flag.String("i", "", "Input file (optional, defaults to stdin if not provided)")
 	outputFile := flag.String("o", "", "Output file (optional, defaults to stdout if not provided)")
+	whoisFlag := flag.Bool("w", false, "Whois Flag, enables Whois check")
+	revLookupFlag := flag.Bool("r", false, "Reverse Lookup Flag, enables Reverse Lookup check")
 	help := flag.Bool("h", false, "Print help message")
 
 	flag.Parse()
@@ -59,8 +61,16 @@ func main() {
 		fmt.Println("        Input file (optional, defaults to stdin if not provided)")
 		fmt.Println("  -o string")
 		fmt.Println("        Output file (optional, defaults to stdout if not provided)")
+		fmt.Println("  -w    Whois Check, defaults to false")
+		fmt.Println("  -r    Reverse Lookup Check, defaults to false")
 		fmt.Println("  -h    Print help message")
 		os.Exit(0)
+	}
+	if *whoisFlag {
+		*whoisFlag = true
+	}
+	if *revLookupFlag {
+		*revLookupFlag = true
 	}
 
 	var input *os.File
@@ -104,19 +114,23 @@ func main() {
 			}
 
 			// Perform whois lookup
-			whoisInfo, err := whoisLookup(ip)
-			if err != nil {
-				fmt.Fprintf(writer, "Whois lookup failed for IP %s: %v\n", ip, err)
-			} else {
-				fmt.Fprintf(writer, "Whois information for IP %s:\n%s\n", ip, whoisInfo)
+			if *whoisFlag {
+				whoisInfo, err := whoisLookup(ip)
+				if err != nil {
+					fmt.Fprintf(writer, "Whois lookup failed for IP %s: %v\n", ip, err)
+				} else {
+					fmt.Fprintf(writer, "Whois information for IP %s:\n%s\n", ip, whoisInfo)
+				}
 			}
 
 			// Perform reverse DNS lookup
-			hostName, err := reverseLookup(ip)
-			if err != nil {
-				fmt.Fprintf(writer, "Reverse DNS lookup failed for IP %s: %v\n", ip, err)
-			} else {
-				fmt.Fprintf(writer, "Reverse DNS host name for IP %s: %s\n", ip, hostName)
+			if *revLookupFlag {
+				hostName, err := reverseLookup(ip)
+				if err != nil {
+					fmt.Fprintf(writer, "Reverse DNS lookup failed for IP %s: %v\n", ip, err)
+				} else {
+					fmt.Fprintf(writer, "Reverse DNS host name for IP %s: %s\n", ip, hostName)
+				}
 			}
 		} else {
 			fmt.Fprintf(writer, "IP %s is not a valid IPv4 address\n", ip)
