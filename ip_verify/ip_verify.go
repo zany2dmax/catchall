@@ -8,69 +8,70 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
+//	"time"
 
 	"github.com/likexian/whois"
 )
 
-// Function to check if an IP address is a valid IPv4 address
+// Check if an IP address is a valid IPv4 address
 func isValidIPv4(ip string) bool {
 	return net.ParseIP(ip) != nil && strings.Count(ip, ":") < 2
 }
 
-// Function to ping an IP address and check if it is reachable
-func pingIP(ip string) bool {
-	cmd := exec.Command("ping", "-c", "3", "-t", "5", ip) // -c: count, -t: timeout
+// Perform a ping to check if an IP address is reachable
+func pingIP(ip string, ch chan<- string) {
+	cmd := exec.Command("ping", "-c", "3", "-t", "5", ip)
 	err := cmd.Run()
-	return err == nil
+	if err != nil {
+		ch <- fmt.Sprintf("IP %s is down", ip)
+	} else {
+		ch <- fmt.Sprintf("IP %s is up", ip)
+	}
 }
 
-// Function to perform whois lookup
-func whoisLookup(ip string) (string, error) {
+// Perform a whois lookup
+func whoisLookup(ip string, ch chan<- string) {
 	result, err := whois.Whois(ip)
 	if err != nil {
-		return "", err
+		ch <- fmt.Sprintf("Whois lookup failed for IP %s: %v", ip, err)
+	} else {
+		ch <- fmt.Sprintf("Whois information for IP %s:\n%s", ip, result)
 	}
-	return result, nil
 }
 
-// Function to perform reverse DNS lookup
-func reverseLookup(ip string) (string, error) {
+// Perform a reverse DNS lookup
+func reverseLookup(ip string, ch chan<- string) {
 	names, err := net.LookupAddr(ip)
 	if err != nil {
-		return "", err
+		ch <- fmt.Sprintf("Reverse DNS lookup failed for IP %s: %v", ip, err)
+	} else if len(names) > 0 {
+		ch <- fmt.Sprintf("Reverse DNS host name for IP %s: %s", ip, names[0])
+	} else {
+		ch <- fmt.Sprintf("No host name found for IP %s", ip)
 	}
-	if len(names) > 0 {
-		return names[0], nil
-	}
-	return "No host name found", nil
 }
 
 func main() {
+	// Define the flags
 	inputFile := flag.String("i", "", "Input file (optional, defaults to stdin if not provided)")
 	outputFile := flag.String("o", "", "Output file (optional, defaults to stdout if not provided)")
-	whoisFlag := flag.Bool("w", false, "Whois Flag, enables Whois check")
-	revLookupFlag := flag.Bool("r", false, "Reverse Lookup Flag, enables Reverse Lookup check")
 	help := flag.Bool("h", false, "Print help message")
+	whoisCheck := flag.Bool("w", false, "Enable whois lookup check")
+	reverseCheck := flag.Bool("r", false, "Enable reverse DNS lookup check")
 
 	flag.Parse()
 
+	// Print help message if -h flag is set
 	if *help {
 		fmt.Println("Usage: program [options]")
 		fmt.Println("Options:")
-		fmt.Println("  -i string")
-		fmt.Println("        Input file (optional, defaults to stdin if not provided)")
-		fmt.Println("  -o string")
-		fmt.Println("        Output file (optional, defaults to stdout if not provided)")
-		fmt.Println("  -w    Whois Check, defaults to false")
-		fmt.Println("  -r    Reverse Lookup Check, defaults to false")
-		fmt.Println("  -h    Print help message")
+		fmt.Println("  -i string    Input file (optional, defaults to stdin if not provided)")
+		fmt.Println("  -o string    Output file (optional, defaults to stdout if not provided)")
+		fmt.Println("  -h           Print help message")
+		fmt.Println("  -w           Enable whois lookup check")
+		fmt.Println("  -r           Enable reverse DNS lookup check")
 		os.Exit(0)
-	}
-	if *whoisFlag {
-		*whoisFlag = true
-	}
-	if *revLookupFlag {
-		*revLookupFlag = true
 	}
 
 	var input *os.File
@@ -102,38 +103,74 @@ func main() {
 	writer := bufio.NewWriter(output)
 	defer writer.Flush()
 
+	// Create a wait group to handle concurrent goroutines
+	var wg sync.WaitGroup
+
 	for scanner.Scan() {
 		ip := strings.TrimSpace(scanner.Text())
-
-		if isValidIPv4(ip) {
-			fmt.Fprintf(writer, "IP %s is valid IPv4", ip)
-			if pingIP(ip) {
-				fmt.Fprintf(writer, " and is up\n")
-			} else {
-				fmt.Fprintf(writer, " and is down\n")
-			}
-
-			// Perform whois lookup
-			if *whoisFlag {
-				whoisInfo, err := whoisLookup(ip)
-				if err != nil {
-					fmt.Fprintf(writer, "Whois lookup failed for IP %s: %v\n", ip, err)
-				} else {
-					fmt.Fprintf(writer, "Whois information for IP %s:\n%s\n", ip, whoisInfo)
-				}
-			}
-
-			// Perform reverse DNS lookup
-			if *revLookupFlag {
-				hostName, err := reverseLookup(ip)
-				if err != nil {
-					fmt.Fprintf(writer, "Reverse DNS lookup failed for IP %s: %v\n", ip, err)
-				} else {
-					fmt.Fprintf(writer, "Reverse DNS host name for IP %s: %s\n", ip, hostName)
-				}
-			}
-		} else {
+		if !isValidIPv4(ip) {
 			fmt.Fprintf(writer, "IP %s is not a valid IPv4 address\n", ip)
+			continue
+		}
+
+		fmt.Fprintf(writer, "Checking IP %s...\n", ip)
+
+		// Create channels to gather results from concurrent functions
+		pingCh := make(chan string, 1)
+		var whoisCh, reverseCh chan string
+
+		// Increment wait group counter
+		wg.Add(1)
+		go func(ip string) {
+			defer wg.Done()
+			pingIP(ip, pingCh)
+		}(ip)
+
+		// Only create and run whois lookup if -w flag is set
+		if *whoisCheck {
+			whoisCh = make(chan string, 1)
+			wg.Add(1)
+			go func(ip string) {
+				defer wg.Done()
+				whoisLookup(ip, whoisCh)
+			}(ip)
+		}
+
+		// Only create and run reverse lookup if -r flag is set
+		if *reverseCheck {
+			reverseCh = make(chan string, 1)
+			wg.Add(1)
+			go func(ip string) {
+				defer wg.Done()
+				reverseLookup(ip, reverseCh)
+			}(ip)
+		}
+
+		// Use a goroutine to wait for all checks to complete, then close channels
+		go func() {
+			wg.Wait()
+			close(pingCh)
+			if whoisCh != nil {
+				close(whoisCh)
+			}
+			if reverseCh != nil {
+				close(reverseCh)
+			}
+		}()
+
+		// Collect and print results from channels
+		for result := range pingCh {
+			fmt.Fprintln(writer, result)
+		}
+		if whoisCh != nil {
+			for result := range whoisCh {
+				fmt.Fprintln(writer, result)
+			}
+		}
+		if reverseCh != nil {
+			for result := range reverseCh {
+				fmt.Fprintln(writer, result)
+			}
 		}
 	}
 
