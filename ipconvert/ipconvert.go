@@ -9,6 +9,7 @@ import (
 	"strings"
 )
 
+// compareIPs compares two IP addresses byte-by-byte.
 func compareIPs(ip1, ip2 net.IP) int {
 	ip1 = ip1.To4()
 	ip2 = ip2.To4()
@@ -24,31 +25,13 @@ func compareIPs(ip1, ip2 net.IP) int {
 	return 0
 }
 
-// getCIDR generates CIDR ranges for a given start and end IP range.
-func getCIDR(startIP, endIP string) ([]*net.IPNet, error) {
-	start := net.ParseIP(startIP).To4() // Ensure IPv4 address
-	end := net.ParseIP(endIP).To4()     // Ensure IPv4 address
-	if start == nil || end == nil {
-		return nil, fmt.Errorf("invalid IP address")
-	}
-	//fmt.Println("Start: ", start)
-	//fmt.Println("End: ", end)
-	var cidrs []*net.IPNet
-	for compareIPs(start, end) <= 0 { // Ensure we exit when start > end
-		size := prefixSize(start, end)
-		_, cidr, _ := net.ParseCIDR(fmt.Sprintf("%s/%d", start, size))
-		cidrs = append(cidrs, cidr)
-
-		// Increment start to the next IP after the current CIDR block
-		start = incrementIP(lastIP(cidr))
-		if start == nil { // Safety check for invalid increment
-			break
-		}
-	}
-	return cidrs, nil
+// isIPv4 checks if a given string is a valid IPv4 address.
+func isIPv4(ip string) bool {
+	parsedIP := net.ParseIP(ip)
+	return parsedIP != nil && parsedIP.To4() != nil
 }
 
-// prefixSize calculates the prefix size for CIDR blocks.
+// prefixSize calculates the largest possible prefix size for a given range.
 func prefixSize(start, end net.IP) int {
 	size := 32
 	for i := range start {
@@ -64,7 +47,7 @@ func prefixSize(start, end net.IP) int {
 	return size
 }
 
-// incrementIP increments an IP address.
+// incrementIP increments an IP address by 1.
 func incrementIP(ip net.IP) net.IP {
 	inc := make(net.IP, len(ip))
 	copy(inc, ip)
@@ -77,6 +60,29 @@ func incrementIP(ip net.IP) net.IP {
 	return inc
 }
 
+// getCIDR generates CIDR ranges for a given start and end IP range.
+func getCIDR(startIP, endIP string) ([]*net.IPNet, error) {
+	start := net.ParseIP(startIP).To4()
+	end := net.ParseIP(endIP).To4()
+	if start == nil || end == nil {
+		return nil, fmt.Errorf("invalid IP address")
+	}
+
+	var cidrs []*net.IPNet
+	for compareIPs(start, end) <= 0 {
+		size := prefixSize(start, end)
+		_, cidr, _ := net.ParseCIDR(fmt.Sprintf("%s/%d", start, size))
+		cidrs = append(cidrs, cidr)
+
+		start = incrementIP(lastIP(cidr))
+		if start == nil {
+			break
+		}
+	}
+	return cidrs, nil
+}
+
+// lastIP calculates the last IP address in a CIDR block.
 func lastIP(cidr *net.IPNet) net.IP {
 	ip := cidr.IP.To4()
 	mask := cidr.Mask
@@ -88,39 +94,76 @@ func lastIP(cidr *net.IPNet) net.IP {
 	return last
 }
 
-// processRanges processes the input and converts ranges to CIDR blocks.
+// cidrToRange converts a CIDR block to a range of IPs (start and end).
+func cidrToRange(cidr string) (string, string, error) {
+	_, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid CIDR: %s", cidr)
+	}
+
+	start := ipNet.IP
+	end := lastIP(ipNet)
+
+	return start.String(), end.String(), nil
+}
+
+// isCIDR checks if the input string is a valid CIDR block.
+func isCIDR(input string) bool {
+	_, _, err := net.ParseCIDR(input)
+	return err == nil
+}
+
+// processInput processes each line of input and handles both ranges and CIDR blocks.
+func processInput(line string) string {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return ""
+	}
+
+	if isCIDR(line) {
+		start, end, err := cidrToRange(line)
+		if err != nil {
+			return fmt.Sprintf("Failed to process CIDR: %s. SKIPPED.", line)
+		}
+		return fmt.Sprintf("%s-%s", start, end)
+	}
+
+	ipBlock := strings.Split(line, "-")
+	if len(ipBlock) == 2 {
+		startIP := strings.TrimSpace(ipBlock[0])
+		endIP := strings.TrimSpace(ipBlock[1])
+
+		cidrs, err := getCIDR(startIP, endIP)
+		if err != nil {
+			return fmt.Sprintf("Failed to process range: %s. SKIPPED.", line)
+		}
+
+		cidrStrings := make([]string, len(cidrs))
+		for i, cidr := range cidrs {
+			cidrStrings[i] = cidr.String()
+		}
+		return strings.Join(cidrStrings, ", ")
+	}
+
+	if isIPv4(line) {
+		singleIP := line
+		return singleIP + "/32"
+	} else {
+		return fmt.Sprintf("Invalid input: %s. SKIPPED.", line)
+	}
+}
+
+// processRanges reads input and processes each line to convert ranges or CIDRs.
 func processRanges(input *os.File, output *os.File) {
 	scanner := bufio.NewScanner(input)
 	writer := bufio.NewWriter(output)
 	defer writer.Flush()
 
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		//fmt.Println(line)
-		if line == "" {
-			continue
-		}
-
-		ipBlock := strings.Split(line, "-")
-		var startIP, endIP string
-		if len(ipBlock) == 2 {
-			startIP = strings.TrimSpace(ipBlock[0])
-			endIP = strings.TrimSpace(ipBlock[1])
-		} else {
-			startIP = strings.TrimSpace(ipBlock[0])
-			endIP = startIP
-		}
-		//fmt.Println(startIP)
-		//fmt.Println(endIP)
-
-		cidrs, err := getCIDR(startIP, endIP)
-		if err != nil {
-			fmt.Fprintf(writer, "Failed to process: %s. SKIPPED.\n", line)
-			continue
-		}
-
-		for _, cidr := range cidrs {
-			fmt.Fprintln(writer, cidr.String())
+		line := scanner.Text()
+		result := processInput(line)
+		if result != "" {
+			fmt.Fprintln(writer, result)
 		}
 	}
 
@@ -135,13 +178,13 @@ func main() {
 	help := flag.Bool("h", false, "Print help message")
 	flag.Parse()
 
-	// Print help message if -h flag is set
 	if *help {
 		fmt.Println("Usage:", os.Args[0], "[options]")
 		fmt.Println("Options:")
 		fmt.Println("  -i string    Input file (optional, defaults to stdin if not provided)")
 		fmt.Println("  -o string    Output file (optional, defaults to stdout if not provided)")
 		fmt.Println("  -h           Print help message")
+		fmt.Println("\n", os.Args[0], " is a small utility to convert IP ranges to CIDR format, and CIDR format to ranges.")
 		os.Exit(0)
 	}
 
