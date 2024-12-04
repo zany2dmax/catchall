@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE ASSET_GROUP_LIST_OUTPUT SYSTEM "https://qualysapi.qg3.apps.qualys.com/api/2.0/fo/asset/group/asset_group_list_output.dtd">
+<!-- This report was generated with an evaluation version of Qualys //--> 
+<ASSET_GROUP_LIST_OUTPUT>
+  <RESPONSE>
+    <DATETIME>2018-03-21T14:59:47Z</DATETIME>
+    <ASSET_GROUP_LIST>
+      <ASSET_GROUP>
+        <ID>205058</ID>
+        <TITLE><![CDATA[All]]></TITLE>
+        <NETWORK_ID>0</NETWORK_ID>
+        <LAST_UPDATE>2018-01-13T17:53:29Z</LAST_UPDATE>
+        <BUSINESS_IMPACT>High</BUSINESS_IMPACT>
+        <IP_SET>
+          <IP_RANGE>192.168.1.0-192.168.1.254</IP_RANGE>
+        </IP_SET>
+        <DOMAIN_LIST>
+          <DOMAIN network_id="0">qualys-test.com</DOMAIN>
+        </DOMAIN_LIST>
+      </ASSET_GROUP>
+      <ASSET_GROUP>
+        <ID>205059</ID>
+        <TITLE><![CDATA[SubNet1_AG]]></TITLE>
+        <OWNER_USER_ID>233374</OWNER_USER_ID>
+        <NETWORK_ID>0</NETWORK_ID>
+        <LAST_UPDATE>2018-01-13T18:30:04Z</LAST_UPDATE>
+        <BUSINESS_IMPACT>High</BUSINESS_IMPACT>
+        <IP_SET>
+          <IP_RANGE>192.168.1.1-192.168.1.14</IP_RANGE>
+        </IP_SET>
+        <COMMENTS><![CDATA[Subnet1 1 covers 192.168.1.0/28]]></COMMENTS>
+      </ASSET_GROUP>
+      <ASSET_GROUP>
+        <ID>205060</ID>
+        <TITLE><![CDATA[SubNet2_AG]]></TITLE>
+        <OWNER_USER_ID>233374</OWNER_USER_ID>
+        <NETWORK_ID>0</NETWORK_ID>
+        <LAST_UPDATE>2018-01-13T18:07:21Z</LAST_UPDATE>
+        <BUSINESS_IMPACT>High</BUSINESS_IMPACT>
+        <IP_SET>
+          <IP_RANGE>192.168.1.17-192.168.1.30</IP_RANGE>
+        </IP_SET>
+        <COMMENTS><![CDATA[Subnet2 AG 192.168.0.16/28]]></COMMENTS>
+      </ASSET_GROUP>
+      <ASSET_GROUP>
+        <ID>205061</ID>
+        <TITLE><![CDATA[SubNet3_AG]]></TITLE>
+        <OWNER_USER_ID>233374</OWNER_USER_ID>
+        <NETWORK_ID>0</NETWORK_ID>
+        <LAST_UPDATE>2018-01-13T18:29:39Z</LAST_UPDATE>
+        <BUSINESS_IMPACT>High</BUSINESS_IMPACT>
+        <IP_SET>
+          <IP_RANGE>192.168.1.33-192.168.1.47</IP_RANGE>
+        </IP_SET>
+        <COMMENTS><![CDATA[3rd subnet 192.168.1.32/28]]></COMMENTS>
+      </ASSET_GROUP>
+      <ASSET_GROUP>
+        <ID>205062</ID>
+        <TITLE><![CDATA[SuBNet4_AG]]></TITLE>
+        <OWNER_USER_ID>233374</OWNER_USER_ID>
+        <NETWORK_ID>0</NETWORK_ID>
+        <LAST_UPDATE>2018-01-13T18:32:11Z</LAST_UPDATE>
+        <BUSINESS_IMPACT>High</BUSINESS_IMPACT>
+        <IP_SET>
+          <IP_RANGE>192.168.1.49-192.168.1.62</IP_RANGE>
+        </IP_SET>
+        <COMMENTS><![CDATA[Subnet 192.168.1.48/28]]></COMMENTS>
+      </ASSET_GROUP>
+    </ASSET_GROUP_LIST>
+  </RESPONSE>
+</ASSET_GROUP_LIST_OUTPUT>
+<!-- This report was generated with an evaluation version of Qualys //--> 
+<!-- CONFIDENTIAL AND PROPRIETARY INFORMATION. Qualys provides the QualysGuard Service "As Is," without any warranty of any kind. Qualys makes no warranty that the information contained in this report is complete or error-free. Copyright 2018, Qualys, Inc. //--> 
