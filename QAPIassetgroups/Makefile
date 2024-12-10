@@ -8,6 +8,7 @@ lint:
 
 build:
 	go build -o ${BINARY_NAME} ${CODEFILE}
+	cp ${BINARY_NAME} ~/bin
  
 run:
 	go build -o ${BINARY_NAME} ${CODEFILE}
@@ -15,4 +16,4 @@ run:
  
 clean:
 	go clean
-	rm ${BINARY_NAME}
+	rm ${BINARY_NAME} ~/bin/${BINARY_NAME}
