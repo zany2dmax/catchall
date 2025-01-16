@@ -9,3 +9,9 @@ A simple go script to verify IP addressess are in proper format, and optionally 
 
 ## ipconvert
 Converts IP ranges (aka 192.168.1.0-192.168.1.255) to a CIDR value (192.168.1.0/24) OR vice-versa.  Automatically can tell ranges and CIDRs.
+
+## Azure AD email checks
+
+Using Microsofts Graph API to get all users of a given tenant and pull out last time they changed their password.
+
+
