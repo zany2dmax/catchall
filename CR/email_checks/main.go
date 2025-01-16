@@ -63,38 +63,46 @@ func getBearerToken(tenantID, clientID, clientSecret string) (string, error) {
 
 func fetchUsers(bearerToken string) ([]User, error) {
 	// Microsoft Graph API endpoint to list users
-	url := "https://graph.microsoft.com/v1.0/users"
+	baseURL := "https://graph.microsoft.com/v1.0/users"
 	graphSelect := "?$top=999&$select=displayName,userPrincipalName,lastPasswordChangeDateTime,accountEnabled"
-	graphAPIUser := url + graphSelect
-
+	url := baseURL + graphSelect
+	var allUsers []User
 	// Create HTTP request
-	req, err := http.NewRequest("GET", graphAPIUser, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %v", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+bearerToken)
+	for url != "" {
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+bearerToken)
 
-	// Execute HTTP request
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch users: %v", err)
-	}
-	defer resp.Body.Close()
+		// Execute HTTP request
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch users: %v", err)
+		}
+		defer resp.Body.Close()
 
-	// Parse the response
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("failed to fetch users, status: %d, response: %s", resp.StatusCode, body)
+		// Parse the response
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("failed to fetch users, status: %d, response: %s", resp.StatusCode, body)
+		}
+		var data struct {
+			Value    []User `json:"value"`
+			NextLink string `json:"@odata.nextLink"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+			return nil, fmt.Errorf("failed to parse user response: %v", err)
+		}
+		// Append current page of users to the result
+		allUsers = append(allUsers, data.Value...)
+		// Set the URL to the next link for pagination
+		url = data.NextLink
 	}
-	var data struct {
-		Value []User `json:"value"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, fmt.Errorf("failed to parse user response: %v", err)
-	}
-	return data.Value, nil
+	return allUsers, nil
 }
+
 func writeUsersToCSV(users []User, filePath string) error {
 	// Create CSV file
 	file, err := os.Create(filePath)
