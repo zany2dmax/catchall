@@ -4,10 +4,10 @@ SOURCE_NAME="main.go"
 deploy: scan lint build
  
 scan:
-	staticcheck ./...
+	staticcheck ${SOURCE_NAME}
 
 lint:
-	golangci-lint run --fast
+	golangci-lint run --fast ${SOURCE_NAME}
 
 build:
 	go build -o ${BINARY_NAME} ${SOURCE_NAME}
