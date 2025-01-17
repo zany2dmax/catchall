@@ -213,7 +213,7 @@ func main() {
 	setupLogging(logFilePath)
 	log.Println("Starting the program...")
 	sendEmailFile := flag.String("f", "AzureAD_Users.csv", "name of the output email file as a .csv")
-	excludeDisabled := flag.Bool("e", false, "Exclude users with accountEnabled set to false")
+	//excludeDisabled := flag.Bool("e", false, "Exclude users with accountEnabled set to false")
 	help := flag.Bool("h", false, "Print help message")
 	flag.Parse()
 	if *help {
@@ -233,11 +233,13 @@ func main() {
 	clientID := os.Getenv("clientID")
 	tenantID := os.Getenv("tenantID")
 	clientSecret := os.Getenv("clientSecret")
-	smtpHost := "dc2.builderspecialties.net"
-	smtpPort := "587"
-	senderEmail := "security@crhomeusa.com"
-	senderPassword := "your-email-password"
-	recipientEmail := "security@crhomeusa.com"
+	clientID := os.Getenv("clientID")
+	tenantID := os.Getenv("tenantID")
+	clientSecret := os.Getenv("clientSecret")
+	smtpHost := os.Getenv("SMTP_HOST")
+	smtpPort := os.Getenv("SMTP_PORT")
+	senderEmail := os.Getenv("SMTP_EMAIL")
+	senderPassword := os.Getenv("SMTP_PASSWORD")
 	subject := "Azure AD Users CSV"
 	body := "Attached is the Azure AD Users export in CSV format."
 	// Step 1: Authenticate with Azure AD and get an OAuth token
