@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -10,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gosnmp/gosnmp"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/pcap"
+	"github.com/gosnmp/gosnmp"
 )
 
 // Wyse MAC Address Prefixes (OUI)
@@ -133,7 +134,7 @@ func scanNmap(target string, wg *sync.WaitGroup) {
 	}
 }
 
-// Function to get the list of all IPs in a subnet
+// Function to get all IPs in a subnet
 func getSubnetIPs(subnet string) []string {
 	ip, ipNet, err := net.ParseCIDR(subnet)
 	if err != nil {
@@ -162,8 +163,8 @@ func inc(ip net.IP) {
 	}
 }
 
-// Function to detect the network subnet of the system
-func getNetworkSubnet() string {
+// Function to detect the current network subnet
+func getCurrentSubnet() string {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		log.Fatal(err)
@@ -192,9 +193,19 @@ func getNetworkSubnet() string {
 }
 
 func main() {
-	// Detect local subnet automatically
-	subnet := getNetworkSubnet()
-	fmt.Printf("Detected Subnet: %s\n", subnet)
+	// Define a flag for specifying a subnet
+	subnetFlag := flag.String("n", "", "Specify subnet in CIDR notation (e.g., 192.168.1.0/24). Defaults to the current subnet.")
+	flag.Parse()
+
+	// Determine subnet: user-provided (-n flag) or auto-detected
+	var subnet string
+	if *subnetFlag != "" {
+		subnet = *subnetFlag
+		fmt.Printf("Using user-specified subnet: %s\n", subnet)
+	} else {
+		subnet = getCurrentSubnet()
+		fmt.Printf("Detected current subnet: %s\n", subnet)
+	}
 
 	// Get all IPs in the subnet
 	ipList := getSubnetIPs(subnet)
