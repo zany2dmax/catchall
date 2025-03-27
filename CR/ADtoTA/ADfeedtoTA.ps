@@ -1,0 +1,104 @@
+param(
+[string]$Subdomain,
+[string]$Token,
+[string]$TenantId
+)
+
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+$ThreatAwareUrl = "https://$Subdomain.threataware.com/api/onprem/send-data"
+
+$ComputerProperties = @("DNSHostName","Enabled","SamAccountName","DistinguishedName","Name","ObjectClass","AccountLockoutTime","AllowReversiblePasswordEncryption","BadLogonCount","CannotChangePassword","CanonicalName","CN","Created","Deleted","Description","DisplayName","IPv4Address","IPv6Address","isDeleted","LastBadPasswordAttempt","LastLogonDate","Location","LockedOut","ManagedBy","MemberOf","Modified","ObjectCategory","OperatingSystem","OperatingSystemHotfix","OperatingSystemServicePack","OperatingSystemVersion","PasswordExpired","PasswordLastSet","PasswordNeverExpires","PasswordNotRequired","PrimaryGroup","primaryGroupID","ProtectedFromAccidentalDeletion","pwdLastSet","whenChanged","whenCreated")
+$UserProperties = @("GivenName","Surname","UserPrincipalName","Enabled","SamAccountName","DistinguishedName","Name","ObjectClass","AccountExpirationDate","accountExpires","AccountLockoutTime","AccountNotDelegated","adminCount","AllowReversiblePasswordEncryption","altSecurityIdentities","BadLogonCount","badPasswordTime","badPwdCount","CannotChangePassword","CanonicalName","City","CN","Company","Created","Deleted","Department","Description","DisplayName","Division","EmailAddress","isDeleted","LastBadPasswordAttempt","LastKnownParent","lastLogon","LastLogonDate","lastLogonTimestamp","LockedOut","lockoutTime","logonCount","LogonWorkstations","Manager","MemberOf","MobilePhone","Modified","Office","OfficePhone","Organization","OtherName","PasswordExpired","PasswordLastSet","PasswordNeverExpires","PasswordNotRequired","ProtectedFromAccidentalDeletion","pwdLastSet","SmartcardLogonRequired","whenChanged","whenCreated")
+$ExcludeProperties = @("PropertyNames","AddedProperties","RemovedProperties","ModifiedProperties","PropertyCount","SID")
+
+function SendData {
+param (
+[string]$DataType,
+[string]$Data,
+[int]$ChunkId,
+[bool]$LastChunk,
+[string]$RunKey
+)
+
+$dataPacket = [PSCustomObject]@{
+SystemType = "onpremad"
+DataType = $DataType
+Data = $Data
+ChunkId = $ChunkId
+LastChunk = $LastChunk
+RunKey = $RunKey
+TenantId = $TenantId
+}
+$payload = [System.Text.Encoding]::UTF8.GetBytes(($dataPacket | ConvertTo-Json))
+Invoke-RestMethod -Uri $ThreatAwareUrl -Method 'Post' -Body $payload -ContentType "application/json" -Headers @{"X-ThreatAware-ApiKey"=$Token}
+
+}
+
+$runKey = $(Get-Date).ToUniversalTime().ToString("yyyyMMddHHmm")
+
+Write-Host "Sending data to; url: $ThreatAwareUrl, job key: $runKey"
+
+Write-Host "Getting users"
+
+$data = [System.Collections.Generic.List[object]]::new()
+$cnt = 0
+$chunkId = 1
+$totalSent = 0
+
+Get-ADUser -ResultPageSize 1000 -Filter * -Properties $UserProperties | `
+Select-Object * -ExcludeProperty $ExcludeProperties | `
+ForEach-Object {
+
+$data.Add($_)
+$cnt++
+$totalSent++
+
+if($cnt -eq 1000)
+{
+
+SendData -DataType "users" -Data $($data | ConvertTo-Json -Compress) -ChunkId $chunkId -LastChunk $False -RunKey $runKey
+
+Write-Host ".... Sent; chunk: $chunkId"
+$data.Clear()
+$cnt = 0
+$chunkId++
+}
+
+}
+
+SendData -DataType "users" -Data $(ConvertTo-Json $data) -ChunkId $chunkId -LastChunk $True -RunKey $runKey
+
+Write-Host "Completed; Total Sent: $totalSent"
+
+Write-Host "Getting computers"
+
+$data = [System.Collections.Generic.List[object]]::new()
+$cnt = 0
+$chunkId = 1
+$totalSent = 0
+
+Get-ADComputer -ResultPageSize 1000 -Filter * -Properties $ComputerProperties | `
+Select-Object * -ExcludeProperty $ExcludeProperties | `
+ForEach-Object {
+
+$data.Add($_)
+$cnt++
+$totalSent++
+
+if($cnt -eq 1000)
+{
+
+SendData -DataType "computers" -Data $($data | ConvertTo-Json -Compress) -ChunkId $chunkId -LastChunk $False -RunKey $runKey
+
+Write-Host ".... Sent; chunk: $chunkId"
+$data.Clear()
+$cnt = 0
+$chunkId++
+}
+
+}
+
+SendData -DataType "computers" -Data $(ConvertTo-Json $data) -ChunkId $chunkId -LastChunk $True -RunKey $runKey
+
+Write-Host "Completed; Total Sent: $totalSent"
