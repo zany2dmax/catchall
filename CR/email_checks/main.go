@@ -13,7 +13,6 @@ import (
 	"net/smtp"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	"github.com/joho/godotenv"
 )
@@ -31,6 +30,7 @@ type User struct {
 	UserPrincipalName          string `json:"userPrincipalName"`
 	LastPasswordChangeDateTime string `json:"lastPasswordChangeDateTime"`
 	AccountEnabled             bool   `json:"accountEnabled"`
+	PasswordPolicies           string `json:"passwordPolicies"`
 }
 
 func setupLogging(logFilePath string) {
@@ -82,7 +82,7 @@ func getBearerToken(tenantID, clientID, clientSecret string) (string, error) {
 func fetchUsers(bearerToken string) ([]User, error) {
 	// Microsoft Graph API endpoint to list users
 	baseURL := "https://graph.microsoft.com/v1.0/users"
-	graphSelect := "?$top=999&$select=displayName,userPrincipalName,lastPasswordChangeDateTime,accountEnabled"
+	graphSelect := "?$top=999&$select=displayName,userPrincipalName,lastPasswordChangeDateTime,accountEnabled,passwordPolicies"
 	url := baseURL + graphSelect
 	var allUsers []User
 	// Create HTTP request
@@ -121,7 +121,7 @@ func fetchUsers(bearerToken string) ([]User, error) {
 	return allUsers, nil
 }
 
-func writeUsersToCSV(users []User, filePath string) error {
+func writeUsersToCSV(users []User, filePath string, excludeDisabled bool) error {
 	// Create CSV file
 	file, err := os.Create(filePath)
 	if err != nil {
@@ -133,18 +133,22 @@ func writeUsersToCSV(users []User, filePath string) error {
 	defer writer.Flush()
 
 	// Write CSV headers
-	headers := []string{"UserPrincipalName", "DisplayName", "LastPasswordChangeDateTime", "AccountEnabled"}
+	headers := []string{"UserPrincipalName", "DisplayName", "LastPasswordChangeDateTime", "PasswordPolicies"}
 	if err := writer.Write(headers); err != nil {
 		return fmt.Errorf("failed to write CSV headers: %v", err)
 	}
 
 	// Write user data to CSV
 	for _, user := range users {
+		if excludeDisabled && !user.AccountEnabled {
+			continue // Skip disabled users if -e flag is set
+		}
 		record := []string{
 			user.UserPrincipalName,
 			user.DisplayName,
 			user.LastPasswordChangeDateTime,
-			strconv.FormatBool(user.AccountEnabled),
+			// strconv.FormatBool(user.AccountEnabled),
+			user.PasswordPolicies,
 		}
 		if err := writer.Write(record); err != nil {
 			return fmt.Errorf("failed to write record: %v", err)
@@ -213,7 +217,7 @@ func main() {
 	setupLogging(logFilePath)
 	log.Println("Starting the program...")
 	sendEmailFile := flag.String("f", "AzureAD_Users.csv", "name of the output email file as a .csv")
-	//excludeDisabled := flag.Bool("e", false, "Exclude users with accountEnabled set to false")
+	excludeDisabled := flag.Bool("e", false, "Exclude users with accountEnabled set to false")
 	help := flag.Bool("h", false, "Print help message")
 	flag.Parse()
 	if *help {
@@ -233,15 +237,15 @@ func main() {
 	clientID := os.Getenv("clientID")
 	tenantID := os.Getenv("tenantID")
 	clientSecret := os.Getenv("clientSecret")
-	clientID := os.Getenv("clientID")
-	tenantID := os.Getenv("tenantID")
-	clientSecret := os.Getenv("clientSecret")
-	smtpHost := os.Getenv("SMTP_HOST")
+	//clientID := os.Getenv("clientID")
+	//tenantID := os.Getenv("tenantID")
+	//clientSecret := os.Getenv("clientSecret")
+	/* smtpHost := os.Getenv("SMTP_HOST")
 	smtpPort := os.Getenv("SMTP_PORT")
 	senderEmail := os.Getenv("SMTP_EMAIL")
 	senderPassword := os.Getenv("SMTP_PASSWORD")
 	subject := "Azure AD Users CSV"
-	body := "Attached is the Azure AD Users export in CSV format."
+	body := "Attached is the Azure AD Users export in CSV format." */
 	// Step 1: Authenticate with Azure AD and get an OAuth token
 	bearerToken, err := getBearerToken(tenantID, clientID, clientSecret)
 	if err != nil {
@@ -253,12 +257,12 @@ func main() {
 		fmt.Errorf("Failed to fetch users: %v", err)
 	}
 	// Step 3: Write user data to a CSV file
-	if err := writeUsersToCSV(users, *sendEmailFile); err != nil {
+	if err := writeUsersToCSV(users, *sendEmailFile, *excludeDisabled); err != nil {
 		fmt.Errorf("Failed to write users to CSV: %v", err)
 	}
 	log.Printf("User export completed. File saved at: %s\n", *sendEmailFile)
-	// Step 4: Mail the CSV data out
-	if err := sendEmail(smtpHost, smtpPort, senderEmail, senderPassword, recipientEmail, subject, body, *sendEmailFile); err != nil {
-		fmt.Errorf("Failed to send email: %v", err)
-	}
+	// Step 4: Mail the CSV data out TBD
+	//if err := sendEmail(smtpHost, smtpPort, senderEmail, senderPassword, recipientEmail, subject, body, *sendEmailFile); err != nil {
+	//	fmt.Errorf("Failed to send email: %v", err)
+	//}
 }
