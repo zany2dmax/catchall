@@ -13,6 +13,7 @@ import (
 	"net/smtp"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -121,7 +122,7 @@ func fetchUsers(bearerToken string) ([]User, error) {
 	return allUsers, nil
 }
 
-func writeUsersToCSV(users []User, filePath string, excludeDisabled bool) error {
+func writeUsersToCSV(users []User, filePath string, excludeDisabled bool, expirationDays int) error {
 	// Create CSV file
 	file, err := os.Create(filePath)
 	if err != nil {
@@ -133,7 +134,7 @@ func writeUsersToCSV(users []User, filePath string, excludeDisabled bool) error 
 	defer writer.Flush()
 
 	// Write CSV headers
-	headers := []string{"UserPrincipalName", "DisplayName", "LastPasswordChangeDateTime", "PasswordPolicies"}
+	headers := []string{"UserPrincipalName", "DisplayName", "LastPasswordChangeDateTime", "PasswordPolicies", "PasswordExpirationDate"}
 	if err := writer.Write(headers); err != nil {
 		return fmt.Errorf("failed to write CSV headers: %v", err)
 	}
@@ -143,12 +144,22 @@ func writeUsersToCSV(users []User, filePath string, excludeDisabled bool) error 
 		if excludeDisabled && !user.AccountEnabled {
 			continue // Skip disabled users if -e flag is set
 		}
+		var expirationDate string
+		if expirationDays > 0 && user.LastPasswordChangeDateTime != "" {
+			// Parse the LastPasswordChangeDateTime assuming it is in RFC3339 format
+			t, err := time.Parse(time.RFC3339, user.LastPasswordChangeDateTime)
+			if err == nil {
+				// Add the expirationDays to the parsed time and format it back to RFC3339
+				expirationDate = t.AddDate(0, 0, expirationDays).Format(time.RFC3339)
+			}
+		}
 		record := []string{
 			user.UserPrincipalName,
 			user.DisplayName,
 			user.LastPasswordChangeDateTime,
 			// strconv.FormatBool(user.AccountEnabled),
 			user.PasswordPolicies,
+			expirationDate,
 		}
 		if err := writer.Write(record); err != nil {
 			return fmt.Errorf("failed to write record: %v", err)
@@ -218,6 +229,7 @@ func main() {
 	log.Println("Starting the program...")
 	sendEmailFile := flag.String("f", "AzureAD_Users.csv", "name of the output email file as a .csv")
 	excludeDisabled := flag.Bool("e", false, "Exclude users with accountEnabled set to false")
+	passwordExpirationDays := flag.Int("p", 0, "Password expiration period in days (if > 0, calculates expiration date based on LastPasswordChangeDateTime)")
 	help := flag.Bool("h", false, "Print help message")
 	flag.Parse()
 	if *help {
@@ -226,6 +238,7 @@ func main() {
 		fmt.Println("  -f filename  Output filename, defaults to AzureAD_Users.csv")
 		fmt.Println("  -h           Print help message")
 		fmt.Println("  -e           Exclude users with accountEnabled set to false")
+		fmt.Println("  -p days      Set password expiration period in days (if > 0, expiration date is computed)")
 		os.Exit(0)
 	}
 	// Load .env files  .env.local takes precedence (if present)
@@ -257,7 +270,7 @@ func main() {
 		fmt.Errorf("Failed to fetch users: %v", err)
 	}
 	// Step 3: Write user data to a CSV file
-	if err := writeUsersToCSV(users, *sendEmailFile, *excludeDisabled); err != nil {
+	if err := writeUsersToCSV(users, *sendEmailFile, *excludeDisabled, *passwordExpirationDays); err != nil {
 		fmt.Errorf("Failed to write users to CSV: %v", err)
 	}
 	log.Printf("User export completed. File saved at: %s\n", *sendEmailFile)

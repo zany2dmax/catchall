@@ -7,11 +7,11 @@ scan:
 	staticcheck ${SOURCE_NAME}
 
 lint:
-	golangci-lint run --fast ${SOURCE_NAME}
+	golangci-lint run ${SOURCE_NAME}
 
 build:
 	go build -o ${BINARY_NAME} ${SOURCE_NAME}
-	cp ${BINARY_NAME} ~/bin
+	cp ${BINARY_NAME} ${HOME}/bin
  
 run:
 	go run -o ${BINARY_NAME} ${SOURCE_NAME}
