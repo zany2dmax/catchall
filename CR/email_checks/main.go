@@ -32,6 +32,9 @@ type User struct {
 	LastPasswordChangeDateTime string `json:"lastPasswordChangeDateTime"`
 	AccountEnabled             bool   `json:"accountEnabled"`
 	PasswordPolicies           string `json:"passwordPolicies"`
+	SignInActivity             struct {
+		LastSignInDateTime string `json:"lastSignInDateTime"`
+	} `json:"signInActivity"`
 }
 
 func setupLogging(logFilePath string) {
@@ -83,7 +86,7 @@ func getBearerToken(tenantID, clientID, clientSecret string) (string, error) {
 func fetchUsers(bearerToken string) ([]User, error) {
 	// Microsoft Graph API endpoint to list users
 	baseURL := "https://graph.microsoft.com/v1.0/users"
-	graphSelect := "?$top=999&$select=displayName,userPrincipalName,lastPasswordChangeDateTime,accountEnabled,passwordPolicies"
+	graphSelect := "?$top=999&$select=displayName,userPrincipalName,lastPasswordChangeDateTime,accountEnabled,passwordPolicies,signInActivity"
 	url := baseURL + graphSelect
 	var allUsers []User
 	// Create HTTP request
@@ -134,7 +137,7 @@ func writeUsersToCSV(users []User, filePath string, excludeDisabled bool, expira
 	defer writer.Flush()
 
 	// Write CSV headers
-	headers := []string{"UserPrincipalName", "DisplayName", "LastPasswordChangeDateTime", "PasswordPolicies", "PasswordExpirationDate"}
+	headers := []string{"UserPrincipalName", "DisplayName", "LastPasswordChangeDateTime", "PasswordPolicies", "LastSignInDateTime", "PasswordExpirationDate"}
 	if err := writer.Write(headers); err != nil {
 		return fmt.Errorf("failed to write CSV headers: %v", err)
 	}
@@ -159,6 +162,9 @@ func writeUsersToCSV(users []User, filePath string, excludeDisabled bool, expira
 			user.LastPasswordChangeDateTime,
 			// strconv.FormatBool(user.AccountEnabled),
 			user.PasswordPolicies,
+			// New column for last sign-in date
+			user.SignInActivity.LastSignInDateTime,
+			// if you’re calculating expiration; otherwise, leave as an empty string or remove this column
 			expirationDate,
 		}
 		if err := writer.Write(record); err != nil {
@@ -262,16 +268,16 @@ func main() {
 	// Step 1: Authenticate with Azure AD and get an OAuth token
 	bearerToken, err := getBearerToken(tenantID, clientID, clientSecret)
 	if err != nil {
-		fmt.Errorf("Failed to get bearer token: %v", err)
+		log.Fatalf("Failed to get bearer token: %v", err)
 	}
 	// Step 2: Make an HTTP request to the Microsoft Graph API
 	users, err := fetchUsers(bearerToken)
 	if err != nil {
-		fmt.Errorf("Failed to fetch users: %v", err)
+		log.Fatalf("Failed to fetch users: %v", err)
 	}
 	// Step 3: Write user data to a CSV file
 	if err := writeUsersToCSV(users, *sendEmailFile, *excludeDisabled, *passwordExpirationDays); err != nil {
-		fmt.Errorf("Failed to write users to CSV: %v", err)
+		log.Fatalf("Failed to write users to CSV: %v", err)
 	}
 	log.Printf("User export completed. File saved at: %s\n", *sendEmailFile)
 	// Step 4: Mail the CSV data out TBD
