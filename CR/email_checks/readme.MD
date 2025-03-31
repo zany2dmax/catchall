@@ -16,7 +16,7 @@ Using Microsofts Graph API to get all users of a given tenant and pull out last 
 	  -f filename  Output filename, defaults to AzureAD_Users.csv
 	  -h           Print help message
 	  -e           Exclude users with accountEnabled set to false
-	  -p           Set password expiration period in days (if > 0, expiration date is computed)
+	  -p days      Set password expiration period in days (if > 0, expiration date is computed)
 
 ## Pre-requisite
 You will need an Entra App created in the Microsoft Entra Admin Center.
