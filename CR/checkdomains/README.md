@@ -29,58 +29,67 @@ cd checkdomains
 go build -o checkdomains sitecheck.go```
 
 OR run directly without building:
-```go run sitecheck.go -in domains.txt -format csv```
+```bash
+go run sitecheck.go -in domains.txt -format csv```
 
 ##Usage
 Prepare a domains.txt file, one domain per line:
-```example.com
+```text
+example.com
 madeupdomain.com```
 
 ##Run via Makefile
-```make build      # Build binary into ./sitecheck and copy to ~/bin
+```make
+make build      # Build binary into ./sitecheck and copy to ~/bin
 make run        # Run the compiled binary
 make scan       # Run static analysis (staticcheck)
 make lint       # Run linter (golangci-lint)
 make clean      # Remove binaries from repo and ~/bin```
 
 ##Flags
-Flag
-Default
-Description
--in
-stdin
-Input file with one domain per line (if omitted, reads from stdin).
--out
-stdout
-Output file (if omitted, writes to stdout).
--path
-/
-Path to request (e.g., /, /lander).
--timeout
-7s
-Per-request timeout.
--retries
-0
-Number of retries per scheme (http/https).
--concurrency
-50
-Number of concurrent workers.
--format
-csv
-Output format: csv or jsonl.
--useragent
-string
-Custom User-Agent header.
--excludeparked
-false
-If true, checks for registrar “lander” pages and marks them excluded.
--exclude-substr
-(list)
-Comma-separated substrings for parked detection. Defaults include:godaddy, wsimg.com, secureservercdn.net, godaddysites.com, myftpupload.com.
--excludeoutput
-false
-Suppress output of rows flagged as excluded/parked.
+
+Flag    Default   Description
+-in     stdin     Input file with one domain per line (if omitted, reads from stdin).
+-out    stdout    Output file (if omitted, writes to stdout).
+-path   /         Path to request (e.g., /, /lander).
+-timeout 7s       Per-request timeout.
+-retries 0        Number of retries per scheme (http/https).
+-concurrency 50 Number of concurrent workers.
+-format csv Output format: csv or jsonl.
+-useragent string Custom User-Agent header.
+-excludeparked false If true, checks for registrar “lander” pages and marks them excluded.
+-exclude-substr (list) Comma-separated substrings for parked detection. Defaults include:godaddy, wsimg.com, secureservercdn.net, godaddysites.com, myftpupload.com.
+-excludeoutput false Suppress output of rows flagged as excluded/parked.
 
 ## Examples
 basic Run
-```go run sitecheck.go -in domains.txt -format csv > results.csv```
+```bash
+go run sitecheck.go -in domains.txt -format csv > results.csv```
+
+## Detect and mark registrar parked pages
+```bash
+go run sitecheck.go -in domains.txt -format csv -excludeparked > results.csv```
+
+##Suppress parked rows entirely
+```bash
+go run sitecheck.go -in domains.txt -format csv -excludeparked -excludeoutput > results.csv```
+
+## Override parked detection substrings
+```bash
+go run sitecheck.go -in domains.txt -format csv -excludeparked -exclude-substr "godaddy,bluehost,sedo,examplecdn.com" > results.csv```
+
+##Parked Domain Exclusion Details
+
+When -excludeparked is enabled:
+	•	The tool probes both the apex (domain.com) and the www host (www.domain.com).
+	•	It also tries common lander paths (/lander, /) in addition to your requested -path.
+	•	The response HTML, headers, and final URL host are scanned for parked indicators.
+	•	If found, the domain is marked with excluded_parked=true and active=false.
+
+⸻
+
+Notes
+	•	When -excludeparked is off, the tool uses Range requests (fetches only the first bytes) for speed.
+	•	When -excludeparked is on, full responses (up to 1 MiB) are read to ensure detection.
+	•	This is a reachability checker, not a full crawler or uptime monitor.
+	•	Use -exclude-substr to customize detection heuristics if you encounter other registrars.
