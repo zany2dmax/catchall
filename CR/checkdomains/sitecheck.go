@@ -16,7 +16,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
@@ -48,12 +47,23 @@ type job struct{ domain string }
 
 var excludeParked bool
 
-// When excluding parked sites, probe a short list of common landing paths.
-// Order: the requested -path first, then /lander, then /.
+// Default substrings that commonly appear on GoDaddy parked / builder pages.
+// We scan both HTML body and response headers for these.
+var defaultParkedIndicators = []string{
+	"godaddy",
+	"wsimg.com",
+	"secureservercdn.net",
+	"godaddysites.com",
+	"myftpupload.com",
+}
+var excludeSubstrCSV string // optional user override like: "godaddy,wsimg.com"
+var suppressExcluded bool
+
+// Try common parked landing paths when -excludeparked is enabled.
 var parkedProbePaths = []string{"/lander", "/"}
 
+// Build the list of paths to probe (dedup, preserve order)
 func buildProbePaths(reqPath string) []string {
-	// Deduplicate while preserving order; ensure reqPath is first.
 	seen := make(map[string]bool, 3)
 	out := make([]string, 0, 3)
 	add := func(p string) {
@@ -75,6 +85,20 @@ func buildProbePaths(reqPath string) []string {
 	return out
 }
 
+// Build the list of hostnames to probe for the given domain.
+// When -excludeparked is on, also try the www. prefix, since many registrars park on www.
+func buildProbeHosts(domain string) []string {
+	if !excludeParked {
+		return []string{domain}
+	}
+	hosts := []string{}
+	if !strings.HasPrefix(strings.ToLower(domain), "www.") {
+		hosts = append(hosts, "www."+domain)
+	}
+	hosts = append(hosts, domain)
+	return hosts
+}
+
 func main() {
 	in := flag.String("in", "", "input file of domains (default: stdin)")
 	out := flag.String("out", "", "output file (default: stdout)")
@@ -85,6 +109,8 @@ func main() {
 	format := flag.String("format", "csv", "output format: csv or jsonl")
 	ua := flag.String("useragent", "sitecheck/1.0 (+https://example.local)", "User-Agent header")
 	flag.BoolVar(&excludeParked, "excludeparked", false, "exclude parked pages containing 'godaddy'")
+	flag.StringVar(&excludeSubstrCSV, "exclude-substr", "", "comma-separated substrings to treat as parked indicators (overrides defaults)")
+	flag.BoolVar(&suppressExcluded, "excludeoutput", false, "suppress output of parked/excluded rows")
 	flag.Parse()
 
 	domains, err := readDomains(*in)
@@ -133,7 +159,20 @@ func main() {
 		fatalf("unknown format: %s", *format)
 	}
 }
-
+func buildIndicators() []string {
+	if strings.TrimSpace(excludeSubstrCSV) == "" {
+		return defaultParkedIndicators
+	}
+	parts := strings.Split(excludeSubstrCSV, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
 func fatalf(format string, a ...interface{}) {
 	fmt.Fprintf(os.Stderr, format+"\n", a...)
 	os.Exit(1)
@@ -184,7 +223,7 @@ func writerFor(path string) (io.Writer, func(), error) {
 func checkDomain(domain, reqPath string, timeout time.Duration, retries int, ua string) Result {
 	res := Result{Domain: domain}
 
-	// DNS diagnostics
+	// DNS diagnostics (for the base domain only)
 	cname, _ := net.LookupCNAME(domain)
 	if cname != "" && !strings.EqualFold(cname, domain+".") {
 		res.CNAME = strings.TrimSuffix(cname, ".")
@@ -201,121 +240,105 @@ func checkDomain(domain, reqPath string, timeout time.Duration, retries int, ua 
 		}
 	}
 
-	// Build paths to try. If excludeParked is on, probe a couple of common parked paths too.
+	hosts := buildProbeHosts(domain)
 	paths := []string{reqPath}
 	if excludeParked {
 		paths = buildProbePaths(reqPath)
 	}
 
-	var lastR Result
-	for _, p := range paths {
-		// Try HTTPS first
-		r := tryOne(domain, "https", p, timeout, retries, ua)
-		// If HTTPS didn't yield anything meaningful, try HTTP
-		if !(r.Active || r.Status > 0 || r.Error == "") {
-			// do nothing; but we still try HTTP below
-		}
-		if !(r.Active || r.Status > 0) {
-			r2 := tryOne(domain, "http", p, timeout, retries, ua)
-			// Prefer r2 if it has any signal
-			if r2.Active || r2.Status > 0 || (r2.Error != "" && r.Error == "") {
-				r = r2
+	var last Result
+	var bestActive *Result
+
+	for _, h := range hosts {
+		for _, p := range paths {
+			// HTTPS first
+			r := tryOne(h, "https", p, timeout, retries, ua)
+			if !(r.Active || r.Status > 0) {
+				// then HTTP
+				r2 := tryOne(h, "http", p, timeout, retries, ua)
+				if r2.Active || r2.Status > 0 || (r2.Error != "" && r.Error == "") {
+					r = r2
+				}
 			}
-		}
 
-		// If we detected a parked page, return immediately (this is the point of the multi-path probe).
-		if r.ExcludedParked {
-			mergeResult(&res, r)
-			return res
-		}
+			// If we detected a parked page, return immediately.
+			if r.ExcludedParked {
+				mergeResult(&res, r)
+				return res
+			}
 
-		// If we found an active site (not parked), return it.
-		if r.Active {
-			mergeResult(&res, r)
-			return res
-		}
+			if r.Active {
+				if !excludeParked {
+					// In normal mode, return the first active we find.
+					mergeResult(&res, r)
+					return res
+				}
+				// In excludeParked mode, remember the active result but keep probing
+				// other host×path combos to see if any are parked.
+				tmp := r
+				bestActive = &tmp
+			}
 
-		// Otherwise, keep the most recent result to return if nothing better shows up.
-		lastR = r
+			last = r
+		}
 	}
 
-	// Nothing active (or only parked) was found; return the last observed result (includes status/error/URL).
-	mergeResult(&res, lastR)
+	// If no parked pages found, prefer an active result if we saw one.
+	if bestActive != nil {
+		mergeResult(&res, *bestActive)
+		return res
+	}
+
+	// Nothing active (or only errors) found; return the last observation.
+	mergeResult(&res, last)
 	return res
 }
 
-func tryOne(domain, scheme, reqPath string, timeout time.Duration, retries int, ua string) Result {
-	client := &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, // we'll record cert, not validate for reachability
-			Proxy:               http.ProxyFromEnvironment,
-			MaxIdleConnsPerHost: 64,
-			ForceAttemptHTTP2:   true,
-		},
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return errors.New("stopped after 10 redirects")
-			}
-			return nil
-		},
+// isParked returns true if the response looks like a GoDaddy parked/builder page.
+// We scan the HTML body and key headers for common GoDaddy asset/host markers.
+// To reduce false positives from just a GoDaddy-issued cert, we only use the TLS issuer
+// as a *weak* signal (i.e., require at least one content/header match as well).
+func isParked(bodyLower string, resp *http.Response, tlsIssuer string, indicators []string) bool {
+	// 1) Body check
+	for _, k := range indicators {
+		if strings.Contains(bodyLower, k) {
+			return true
+		}
 	}
 
-	u := &url.URL{Scheme: scheme, Host: domain, Path: reqPath}
-
-	var lastErr error
-	start := time.Now()
-	for attempt := 0; attempt <= retries; attempt++ {
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-		req.Header.Set("User-Agent", ua)
-		// Only use a tiny range when we are NOT scanning for parked content.
-		// When excludeParked is on, fetch a normal response so we can inspect enough of the HTML.
-		if !excludeParked {
-			req.Header.Set("Range", "bytes=0-65535")
+	// 2) Header check (common places where CDNs/hosts appear)
+	//    We concatenate header values and scan once.
+	var hdrBuf strings.Builder
+	// A few likely headers:
+	for _, h := range []string{"Content-Security-Policy", "Link", "Set-Cookie", "Referrer-Policy", "Report-To"} {
+		if v := resp.Header.Get(h); v != "" {
+			hdrBuf.WriteString(strings.ToLower(v))
+			hdrBuf.WriteString("\n")
 		}
-		resp, err := client.Do(req)
-		cancel()
-		if err != nil {
-			lastErr = err
-			continue
+	}
+	headerStr := hdrBuf.String()
+	for _, k := range indicators {
+		if strings.Contains(headerStr, k) {
+			return true
 		}
-		defer resp.Body.Close()
-
-		// Read some of the body so we can search for "godaddy"
-		bodyBytes, _ := ioutil.ReadAll(io.LimitReader(resp.Body, 1024*1024))
-		bodyStr := strings.ToLower(string(bodyBytes))
-
-		rr := Result{
-			Domain:   domain,
-			Scheme:   scheme,
-			Status:   resp.StatusCode,
-			Active:   resp.StatusCode >= 200 && resp.StatusCode <= 399,
-			FinalURL: resp.Request.URL.String(),
-			RespTime: time.Since(start),
-		}
-		// If excludeParked flag is set, and the body contains "godaddy", mark it as excluded
-		if excludeParked && strings.Contains(bodyStr, "godaddy") {
-			rr.Active = false
-			rr.ExcludedParked = true
-		}
-		if resp.TLS != nil {
-			rr.TLSServerName = resp.TLS.ServerName
-			if len(resp.TLS.PeerCertificates) > 0 {
-				iss := resp.TLS.PeerCertificates[0].Issuer
-				rr.TLSIssuer = iss.CommonName
-				if rr.TLSIssuer == "" && len(iss.Organization) > 0 {
-					rr.TLSIssuer = iss.Organization[0]
-				}
-			}
-			for _, cert := range resp.TLS.PeerCertificates {
-				rr.TLSDNSNames = append(rr.TLSDNSNames, cert.DNSNames...)
-			}
-		}
-		return rr
 	}
 
-	return Result{Domain: domain, Scheme: scheme, Error: lastErrString(lastErr)}
+	// 3) Final URL host (some builders redirect to hosted domains)
+	if resp.Request != nil && resp.Request.URL != nil {
+		host := strings.ToLower(resp.Request.URL.Host)
+		for _, k := range indicators {
+			if strings.Contains(host, k) {
+				return true
+			}
+		}
+	}
+
+	// 4) TLS issuer alone is not enough (many legit sites use GoDaddy CAs),
+	//    but if issuer contains "go daddy" *and* we found at least one weak hint
+	//    above (already returned), we'd have already returned true. So here it doesn't flip it.
+	//    Keep this as a no-op to avoid false positives.
+
+	return false
 }
 
 func lastErrString(err error) string {
@@ -341,11 +364,93 @@ func mergeResult(dst *Result, src Result) {
 	dst.Error = src.Error
 	dst.ExcludedParked = src.ExcludedParked
 }
+func tryOne(domain, scheme, reqPath string, timeout time.Duration, retries int, ua string) Result {
+	client := &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+			Proxy:               http.ProxyFromEnvironment,
+			MaxIdleConnsPerHost: 64,
+			ForceAttemptHTTP2:   true,
+		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("stopped after 10 redirects")
+			}
+			return nil
+		},
+	}
 
+	u := &url.URL{Scheme: scheme, Host: domain, Path: reqPath}
+
+	var lastErr error
+	start := time.Now()
+	for attempt := 0; attempt <= retries; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		req.Header.Set("User-Agent", ua)
+		if !excludeParked {
+			req.Header.Set("Range", "bytes=0-65535")
+		}
+		resp, err := client.Do(req)
+		cancel()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		defer resp.Body.Close()
+
+		// Read up to ~1 MiB so we can search for indicators.
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+		bodyStr := strings.ToLower(string(bodyBytes))
+
+		rr := Result{
+			Domain:   domain,
+			Scheme:   scheme,
+			Status:   resp.StatusCode,
+			Active:   resp.StatusCode >= 200 && resp.StatusCode <= 399,
+			FinalURL: resp.Request.URL.String(),
+			RespTime: time.Since(start),
+		}
+
+		// Capture TLS details
+		if resp.TLS != nil {
+			rr.TLSServerName = resp.TLS.ServerName
+			if len(resp.TLS.PeerCertificates) > 0 {
+				iss := resp.TLS.PeerCertificates[0].Issuer
+				rr.TLSIssuer = iss.CommonName
+				if rr.TLSIssuer == "" && len(iss.Organization) > 0 {
+					rr.TLSIssuer = iss.Organization[0]
+				}
+			}
+			for _, cert := range resp.TLS.PeerCertificates {
+				rr.TLSDNSNames = append(rr.TLSDNSNames, cert.DNSNames...)
+			}
+		}
+
+		// Parked detection (HTML + headers + final URL host)
+		if excludeParked {
+			if isParked(bodyStr, resp, rr.TLSIssuer, buildIndicators()) {
+				rr.Active = false
+				rr.ExcludedParked = true
+			}
+		}
+
+		return rr
+	}
+
+	return Result{Domain: domain, Scheme: scheme, Error: lastErrString(lastErr)}
+}
 func writeCSV(w io.Writer, ch <-chan Result) {
 	cw := csv.NewWriter(w)
-	_ = cw.Write([]string{"domain", "dns_ok", "has_a", "has_aaaa", "cname", "scheme", "status", "active", "final_url", "response_time_ms", "tls_server_name", "tls_issuer", "error", "excluded_parked"})
+	_ = cw.Write([]string{
+		"domain", "dns_ok", "has_a", "has_aaaa", "cname", "scheme", "status", "active",
+		"final_url", "response_time_ms", "tls_server_name", "tls_issuer", "error", "excluded_parked",
+	})
 	for r := range ch {
+		if suppressExcluded && r.ExcludedParked {
+			continue // skip parked rows if suppression is on
+		}
 		row := []string{
 			r.Domain,
 			fmt.Sprintf("%t", r.DNSOK),
@@ -366,10 +471,12 @@ func writeCSV(w io.Writer, ch <-chan Result) {
 	}
 	cw.Flush()
 }
-
 func writeJSONL(w io.Writer, ch <-chan Result) {
 	enc := json.NewEncoder(w)
 	for r := range ch {
+		if suppressExcluded && r.ExcludedParked {
+			continue
+		}
 		_ = enc.Encode(r)
 	}
 }
