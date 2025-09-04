@@ -14,7 +14,7 @@ build:
 	cp ${BINARY_NAME} ${HOME}/bin
  
 run:
-	go run -o ${BINARY_NAME} ${SOURCE_NAME}
+	go run ${BINARY_NAME}
  
 clean:
 	go clean
