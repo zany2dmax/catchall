@@ -16,6 +16,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
@@ -26,23 +27,53 @@ import (
 )
 
 type Result struct {
-	Domain        string        `json:"domain"`
-	DNSOK         bool          `json:"dns_ok"`
-	HasA          bool          `json:"has_a"`
-	HasAAAA       bool          `json:"has_aaaa"`
-	CNAME         string        `json:"cname,omitempty"`
-	Scheme        string        `json:"scheme"`
-	Status        int           `json:"status"`
-	Active        bool          `json:"active"`
-	FinalURL      string        `json:"final_url,omitempty"`
-	RespTime      time.Duration `json:"response_time_ms"`
-	TLSServerName string        `json:"tls_server_name,omitempty"`
-	TLSIssuer     string        `json:"tls_issuer,omitempty"`
-	TLSDNSNames   []string      `json:"tls_dns_names,omitempty"`
-	Error         string        `json:"error,omitempty"`
+	Domain         string        `json:"domain"`
+	DNSOK          bool          `json:"dns_ok"`
+	HasA           bool          `json:"has_a"`
+	HasAAAA        bool          `json:"has_aaaa"`
+	CNAME          string        `json:"cname,omitempty"`
+	Scheme         string        `json:"scheme"`
+	Status         int           `json:"status"`
+	Active         bool          `json:"active"`
+	FinalURL       string        `json:"final_url,omitempty"`
+	RespTime       time.Duration `json:"response_time_ms"`
+	TLSServerName  string        `json:"tls_server_name,omitempty"`
+	TLSIssuer      string        `json:"tls_issuer,omitempty"`
+	TLSDNSNames    []string      `json:"tls_dns_names,omitempty"`
+	Error          string        `json:"error,omitempty"`
+	ExcludedParked bool          `json:"excluded_parked,omitempty"`
 }
 
 type job struct{ domain string }
+
+var excludeParked bool
+
+// When excluding parked sites, probe a short list of common landing paths.
+// Order: the requested -path first, then /lander, then /.
+var parkedProbePaths = []string{"/lander", "/"}
+
+func buildProbePaths(reqPath string) []string {
+	// Deduplicate while preserving order; ensure reqPath is first.
+	seen := make(map[string]bool, 3)
+	out := make([]string, 0, 3)
+	add := func(p string) {
+		if p == "" {
+			p = "/"
+		}
+		if !strings.HasPrefix(p, "/") {
+			p = "/" + p
+		}
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	add(reqPath)
+	for _, p := range parkedProbePaths {
+		add(p)
+	}
+	return out
+}
 
 func main() {
 	in := flag.String("in", "", "input file of domains (default: stdin)")
@@ -53,6 +84,7 @@ func main() {
 	conc := flag.Int("concurrency", 50, "number of workers")
 	format := flag.String("format", "csv", "output format: csv or jsonl")
 	ua := flag.String("useragent", "sitecheck/1.0 (+https://example.local)", "User-Agent header")
+	flag.BoolVar(&excludeParked, "excludeparked", false, "exclude parked pages containing 'godaddy'")
 	flag.Parse()
 
 	domains, err := readDomains(*in)
@@ -169,14 +201,46 @@ func checkDomain(domain, reqPath string, timeout time.Duration, retries int, ua 
 		}
 	}
 
-	// Try HTTPS first, then HTTP
-	if r := tryOne(domain, "https", reqPath, timeout, retries, ua); r.Active || r.Status > 0 {
-		mergeResult(&res, r)
-		return res
+	// Build paths to try. If excludeParked is on, probe a couple of common parked paths too.
+	paths := []string{reqPath}
+	if excludeParked {
+		paths = buildProbePaths(reqPath)
 	}
-	// fall back to HTTP
-	r := tryOne(domain, "http", reqPath, timeout, retries, ua)
-	mergeResult(&res, r)
+
+	var lastR Result
+	for _, p := range paths {
+		// Try HTTPS first
+		r := tryOne(domain, "https", p, timeout, retries, ua)
+		// If HTTPS didn't yield anything meaningful, try HTTP
+		if !(r.Active || r.Status > 0 || r.Error == "") {
+			// do nothing; but we still try HTTP below
+		}
+		if !(r.Active || r.Status > 0) {
+			r2 := tryOne(domain, "http", p, timeout, retries, ua)
+			// Prefer r2 if it has any signal
+			if r2.Active || r2.Status > 0 || (r2.Error != "" && r.Error == "") {
+				r = r2
+			}
+		}
+
+		// If we detected a parked page, return immediately (this is the point of the multi-path probe).
+		if r.ExcludedParked {
+			mergeResult(&res, r)
+			return res
+		}
+
+		// If we found an active site (not parked), return it.
+		if r.Active {
+			mergeResult(&res, r)
+			return res
+		}
+
+		// Otherwise, keep the most recent result to return if nothing better shows up.
+		lastR = r
+	}
+
+	// Nothing active (or only parked) was found; return the last observed result (includes status/error/URL).
+	mergeResult(&res, lastR)
 	return res
 }
 
@@ -205,7 +269,11 @@ func tryOne(domain, scheme, reqPath string, timeout time.Duration, retries int, 
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 		req.Header.Set("User-Agent", ua)
-		req.Header.Set("Range", "bytes=0-0")
+		// Only use a tiny range when we are NOT scanning for parked content.
+		// When excludeParked is on, fetch a normal response so we can inspect enough of the HTML.
+		if !excludeParked {
+			req.Header.Set("Range", "bytes=0-65535")
+		}
 		resp, err := client.Do(req)
 		cancel()
 		if err != nil {
@@ -214,6 +282,10 @@ func tryOne(domain, scheme, reqPath string, timeout time.Duration, retries int, 
 		}
 		defer resp.Body.Close()
 
+		// Read some of the body so we can search for "godaddy"
+		bodyBytes, _ := ioutil.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+		bodyStr := strings.ToLower(string(bodyBytes))
+
 		rr := Result{
 			Domain:   domain,
 			Scheme:   scheme,
@@ -221,6 +293,11 @@ func tryOne(domain, scheme, reqPath string, timeout time.Duration, retries int, 
 			Active:   resp.StatusCode >= 200 && resp.StatusCode <= 399,
 			FinalURL: resp.Request.URL.String(),
 			RespTime: time.Since(start),
+		}
+		// If excludeParked flag is set, and the body contains "godaddy", mark it as excluded
+		if excludeParked && strings.Contains(bodyStr, "godaddy") {
+			rr.Active = false
+			rr.ExcludedParked = true
 		}
 		if resp.TLS != nil {
 			rr.TLSServerName = resp.TLS.ServerName
@@ -262,11 +339,12 @@ func mergeResult(dst *Result, src Result) {
 	dst.TLSIssuer = src.TLSIssuer
 	dst.TLSDNSNames = src.TLSDNSNames
 	dst.Error = src.Error
+	dst.ExcludedParked = src.ExcludedParked
 }
 
 func writeCSV(w io.Writer, ch <-chan Result) {
 	cw := csv.NewWriter(w)
-	_ = cw.Write([]string{"domain", "dns_ok", "has_a", "has_aaaa", "cname", "scheme", "status", "active", "final_url", "response_time_ms", "tls_server_name", "tls_issuer", "error"})
+	_ = cw.Write([]string{"domain", "dns_ok", "has_a", "has_aaaa", "cname", "scheme", "status", "active", "final_url", "response_time_ms", "tls_server_name", "tls_issuer", "error", "excluded_parked"})
 	for r := range ch {
 		row := []string{
 			r.Domain,
@@ -282,6 +360,7 @@ func writeCSV(w io.Writer, ch <-chan Result) {
 			r.TLSServerName,
 			r.TLSIssuer,
 			r.Error,
+			fmt.Sprintf("%t", r.ExcludedParked),
 		}
 		_ = cw.Write(row)
 	}
