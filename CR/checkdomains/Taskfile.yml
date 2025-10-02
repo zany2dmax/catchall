@@ -1,0 +1,39 @@
+version: "3"
+
+vars:
+  BINARY_NAME: sitecheck
+  SOURCE_NAME: sitecheck.go
+
+tasks:
+  deploy:
+    desc: Run scan, lint, and build
+    deps: [scan, lint, build]
+
+  scan:
+    desc: Run staticcheck on source
+    cmds:
+      - staticcheck {{.SOURCE_NAME}}
+
+  lint:
+    desc: Run golangci-lint on source
+    cmds:
+      - golangci-lint run {{.SOURCE_NAME}}
+
+  build:
+    desc: Build binary and copy to ~/bin
+    cmds:
+      - go build -o {{.BINARY_NAME}} {{.SOURCE_NAME}}
+      - cp {{.BINARY_NAME}} "$HOME/bin"
+
+  run:
+    desc: Run using go run (matches Makefile behavior)
+    cmds:
+      - go run {{.BINARY_NAME}}
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - go clean
+      - rm -f {{.BINARY_NAME}}
+      - rm -f "$HOME/bin/{{.BINARY_NAME}}"
+
