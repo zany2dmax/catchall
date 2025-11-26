@@ -1,7 +1,7 @@
 // sitecheck.go
 // Concurrent checker to see if domains have an active website.
 //
-// Usage example:
+// Usage example: (test)
 //
 //	go run sitecheck.go -in domains.txt -out results.csv
 package main
