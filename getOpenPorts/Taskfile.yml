@@ -1,0 +1,27 @@
+version: '3'
+
+tasks:
+  build:
+    cmds:
+      - go build -o bin/qualys-openports ./cmd/qualys-openports
+    silent: false
+
+  run:
+    cmds:
+      - go run ./cmd/qualys-openports {{.CLI_ARGS}}
+
+  clean:
+    cmds:
+      - rm -rf bin
+      - go clean
+    silent: false
+
+  lint:
+    cmds:
+      - golangci-lint run
+    silent: false
+
+  scan:
+    cmds:
+      - go vet ./...
+      - go test ./...
