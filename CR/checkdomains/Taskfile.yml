@@ -1,39 +1,51 @@
-version: "3"
+version: '3'
 
 vars:
   BINARY_NAME: sitecheck
   SOURCE_NAME: sitecheck.go
+  INSTALL_PATH: "{{.HOME}}/bin"
 
 tasks:
-  deploy:
-    desc: Run scan, lint, and build
-    deps: [scan, lint, build]
+
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
 
   scan:
-    desc: Run staticcheck on source
+    desc: Run staticcheck
     cmds:
       - staticcheck {{.SOURCE_NAME}}
 
   lint:
-    desc: Run golangci-lint on source
+    desc: Run golangci-lint
     cmds:
       - golangci-lint run {{.SOURCE_NAME}}
 
   build:
-    desc: Build binary and copy to ~/bin
+    desc: Build binary
     cmds:
       - go build -o {{.BINARY_NAME}} {{.SOURCE_NAME}}
-      - cp {{.BINARY_NAME}} "$HOME/bin"
+
+  install:
+    desc: Build and install to ~/bin
+    deps: [build]
+    cmds:
+      - mkdir -p {{.INSTALL_PATH}}
+      - cp {{.BINARY_NAME}} {{.INSTALL_PATH}}/
 
   run:
-    desc: Run using go run (matches Makefile behavior)
+    desc: Build and run binary
+    deps: [build]
     cmds:
-      - go run {{.BINARY_NAME}}
+      - ./{{.BINARY_NAME}} {{.CLI_ARGS}}
+
+  deploy:
+    desc: Scan, lint, build, install
+    deps: [scan, lint, install]
 
   clean:
-    desc: Clean build artifacts
+    desc: Remove built binaries
     cmds:
-      - go clean
       - rm -f {{.BINARY_NAME}}
-      - rm -f "$HOME/bin/{{.BINARY_NAME}}"
-
+      - rm -f {{.INSTALL_PATH}}/{{.BINARY_NAME}}
