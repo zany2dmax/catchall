@@ -2,9 +2,10 @@
 // Concurrent checker to see if domains have an active website (and optional email/DNS posture).
 //
 // Examples:
-//   go run sitecheck.go -in domains.txt -format csv > results.csv
-//   go run sitecheck.go -in domains.txt -format csv -excludeparked -excludeoutput > results.csv
-//   go run sitecheck.go -in domains.txt -format csv -checkemail -mxstrict -requiremx > results.csv
+//
+//	go run sitecheck.go -in domains.txt -format csv > results.csv
+//	go run sitecheck.go -in domains.txt -format csv -excludeparked -excludeoutput > results.csv
+//	go run sitecheck.go -in domains.txt -format csv -checkemail -mxstrict -requiremx > results.csv
 package main
 
 import (
@@ -182,7 +183,9 @@ func readDomains(path string) ([]string, error) {
 			return nil, err
 		}
 		r = f
-		defer f.Close()
+		defer func() {
+			_ = f.Close()
+		}()
 	}
 
 	s := bufio.NewScanner(r)
@@ -202,6 +205,7 @@ func readDomains(path string) ([]string, error) {
 		line = strings.Split(line, "/")[0]
 		out = append(out, line)
 	}
+
 	return out, s.Err()
 }
 
@@ -344,7 +348,7 @@ func checkDomain(domain, reqPath string, timeout time.Duration, retries int, ua 
 	for _, h := range hosts {
 		for _, p := range paths {
 			r := tryOne(h, "https", p, timeout, retries, ua)
-			if !(r.Active || r.Status > 0) {
+			if !r.Active && r.Status <= 0 {
 				r2 := tryOne(h, "http", p, timeout, retries, ua)
 				if r2.Active || r2.Status > 0 || (r2.Error != "" && r.Error == "") {
 					r = r2
@@ -426,7 +430,9 @@ func tryOne(domain, scheme, reqPath string, timeout time.Duration, retries int, 
 			lastErr = err
 			continue
 		}
-		defer resp.Body.Close()
+		defer func() {
+			_ = resp.Body.Close()
+		}()
 
 		// Read up to ~1 MiB to allow content/header heuristics
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
@@ -702,7 +708,7 @@ func smtpBannerFirst(hosts []string, port int, timeout time.Duration) (host stri
 			continue
 		}
 
-		addr := fmt.Sprintf("%s:%d", h, port)
+		addr := net.JoinHostPort(h, fmt.Sprintf("%d", port))
 		conn, err := net.DialTimeout("tcp", addr, timeout)
 		if err != nil {
 			continue
